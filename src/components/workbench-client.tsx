@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
@@ -674,18 +673,16 @@ function TopBar({
   return (
     <header className="workbench-panel flex min-h-14 items-center justify-between gap-4 px-3 py-2">
       <div className="flex min-w-0 items-center gap-3">
-        <Image
-          src="/assets/cognicellai-logo.svg"
-          alt=""
-          width={40}
-          height={40}
-          priority
-          className="h-8 w-8 shrink-0 rounded-lg"
-        />
+        <div
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-cyan/40 bg-cyan/10 text-cyan-strong shadow-[0_0_28px_rgb(17_240_240/0.18)]"
+          aria-hidden="true"
+        >
+          <Link2 className="h-4 w-4" />
+        </div>
         <div className="min-w-0">
-          <p className="text-sm font-black tracking-normal text-white">CognicellAI A2A + A2UI Workbench</p>
+          <p className="text-sm font-black tracking-normal text-white">A2A + A2UI Workbench</p>
           <p className="truncate text-xs font-medium text-muted">
-            Real message/stream traffic with protocol evidence and rendered A2UI surfaces
+            Real message:send and message:stream traffic with protocol evidence and rendered A2UI surfaces
           </p>
         </div>
       </div>

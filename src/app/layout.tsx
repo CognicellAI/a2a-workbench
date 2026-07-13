@@ -8,12 +8,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "A2A + A2UI Workbench | CognicellAI",
-  description:
-    "A CognicellAI protocol workbench for testing A2A message streams and rendering A2UI output.",
-  icons: {
-    icon: "/assets/cognicellai-logo.svg",
-  },
+  title: "A2A + A2UI Workbench",
+  description: "A local protocol workbench for testing A2A endpoints and rendering A2UI output.",
 };
 
 export default function RootLayout({

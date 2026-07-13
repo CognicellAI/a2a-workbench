@@ -1,7 +1,17 @@
 {
   "name": "a2a-workbench",
+  "description": "Local A2A and A2UI protocol workbench for debugging agent endpoints.",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "a2a",
+    "a2ui",
+    "agents",
+    "protocol",
+    "workbench"
+  ],
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

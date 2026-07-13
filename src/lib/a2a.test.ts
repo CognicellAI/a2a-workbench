@@ -22,7 +22,7 @@ describe("SSE parsing", () => {
 });
 
 describe("A2A request construction", () => {
-  it("builds message/stream with trigger, context, and A2UI capabilities", () => {
+  it("builds an HTTP+JSON send-message request with trigger, context, and A2UI capabilities", () => {
     const built = buildA2aStreamRequest({
       prompt: "Render a status card",
       contextId: "ctx-1",

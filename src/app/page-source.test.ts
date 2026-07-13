@@ -48,7 +48,7 @@ describe("workbench source guardrails", () => {
     expect(source).not.toContain("dangerouslySetInnerHTML");
   });
 
-  it("contains CognicellAI brand tokens", () => {
+  it("contains the workbench visual tokens", () => {
     const css = readFileSync(join(root, "src/app/globals.css"), "utf8");
 
     expect(css).toContain("#06080d");

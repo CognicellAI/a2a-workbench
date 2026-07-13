@@ -2,12 +2,12 @@
 
 ## Summary
 
-The A2A + A2UI Workbench is a local Next.js App Router application for testing real A2A `message/stream` traffic and rendering A2UI output with the local official A2UI React v0.9 renderer.
+The A2A + A2UI Workbench is a local Next.js App Router application for testing real A2A `message:send` and `message:stream` traffic and rendering A2UI output with the official A2UI React v0.9 renderer.
 
 It is intentionally a protocol workbench, not a production customer console. Its primary jobs are:
 
 - Connect to any HTTP(S) A2A endpoint for a run.
-- Send real JSON-RPC `message/stream` requests.
+- Send real A2A HTTP+JSON `SendMessageRequest` requests.
 - Preserve raw protocol visibility while also rendering user-friendly chat text.
 - Extract and normalize A2UI envelopes from A2A parts.
 - Render A2UI through `@a2ui/react/v0_9`.
@@ -101,7 +101,7 @@ The route converts upstream stream frames into these browser-facing SSE event na
 
 | Event | Emitted By | Purpose |
 | --- | --- | --- |
-| `request` | Route | Redacted outbound request metadata and JSON-RPC body. |
+| `request` | Route | Redacted outbound request metadata and HTTP+JSON body. |
 | `raw` | Route | Original upstream SSE frame or synthetic single-response frame before JSON interpretation. |
 | `a2a` | Route | Parsed upstream JSON payload. |
 | `meta` | Route | Extracted A2A `id`, `taskId`, `contextId`, `kind`, `final`, and status metadata where present. |
@@ -302,33 +302,17 @@ Security goals for the workbench are demo-grade but explicit:
 
 Important limitation: if an upstream agent echoes a secret inside ordinary text or a non-secret field name, the workbench cannot reliably detect that semantic leak. The redaction layer is key-name based.
 
-## Local A2UI Dependency Strategy
+## A2UI Dependency Strategy
 
-The app imports local A2UI sources through package file dependencies and explicit Next webpack aliases.
+The app uses published A2UI packages:
 
-`package.json` uses:
+- `@a2ui/react`
+- `@a2ui/web_core`
 
-- `@a2ui/react`: `file:../a2ui/renderers/react`
-- `@a2ui/web_core`: `file:../a2ui/renderers/web_core`
-
-`next.config.mjs` aliases versioned imports to source files:
+The renderer imports the v0.9 entrypoints:
 
 - `@a2ui/react/v0_9`
 - `@a2ui/web_core/v0_9`
-- `@a2ui/web_core/v0_9/basic_catalog`
-- `@a2ui/web_core/types/types`
-
-The app opts into:
-
-- `experimental.externalDir: true`
-- `.js` extension aliases to allow source TypeScript imports through package code paths.
-
-`scripts/prepare-local.mjs` runs before dev/build/typecheck/test. It:
-
-- Verifies `../a2ui/node_modules` exists.
-- Symlinks local `node_modules` to the vendored A2UI workspace if needed.
-- Runs the A2UI `web_core` spec copy script so schemas required by the renderer exist.
-- Uses a short filesystem lock to avoid concurrent prep races.
 
 ## Error Handling
 
@@ -336,6 +320,8 @@ The route emits user-visible `error` events for:
 
 - Missing prompt.
 - Missing or invalid A2A URL.
+- Blocked private-network, reserved-network, or non-allowlisted upstream URLs.
+- Upstream timeout or byte-limit failures.
 - Upstream response that is neither `text/event-stream` nor parseable JSON.
 - Missing upstream stream body.
 - Malformed upstream SSE JSON frames.
@@ -352,29 +338,34 @@ The browser handles:
 
 The current test suite is unit/source focused:
 
-- `test/a2a.test.ts`
+- `src/lib/a2a.test.ts`
   - SSE frame parsing.
-  - JSON-RPC `message/stream` request construction.
+  - HTTP+JSON `SendMessageRequest` construction.
   - A2UI trigger insertion.
   - A2A status/message/artifact part extraction.
   - `statusUpdate` unwrapping.
   - Secret redaction.
-- `test/a2ui.test.ts`
+- `src/lib/a2ui.test.ts`
   - A2UI data-part extraction.
   - Stringified and nested payload support.
   - Fallback surface/root insertion.
   - Version filtering.
   - v1.0-to-v0.9 compatibility normalization.
   - Legacy fenced block extraction and prose stripping.
-- `test/connection.test.ts`
+- `src/lib/connection.test.ts`
   - URL/header normalization.
   - Non-HTTP URL rejection.
   - Header forwarding.
   - Redaction.
   - Non-secret persistence.
-- `test/page-source.test.ts`
+- `src/app/page-source.test.ts`
   - Guards against reintroducing premade prompt selections.
   - Keeps run counters in the Protocol Inspector rather than Chat.
+- `src/app/api/a2a/stream/route.test.ts`
+  - `message:send` JSON response normalization.
+  - Private-network upstream blocking.
+  - Optional upstream allowlist enforcement.
+  - Upstream response byte-limit enforcement.
 
 Standard checks:
 
