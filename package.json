@@ -22,7 +22,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run && npm run test --workspace @a2a-workbench/client",
-    "typecheck": "tsc --noEmit && npm run typecheck --workspace @a2a-workbench/client",
+    "typecheck": "npm run build:client && tsc --noEmit && npm run typecheck --workspace @a2a-workbench/client",
     "docs:check": "node scripts/check-docs.mjs",
     "conformance:check": "node scripts/check-conformance.mjs",
     "package:smoke": "npm run build:client && node scripts/check-package-exports.mjs",
