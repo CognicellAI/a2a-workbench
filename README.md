@@ -8,6 +8,10 @@ available to external Node.js applications.
 Maintained by [CognicellAI](https://cognicellai.com/). Created by [Herman
 Haggerty](https://github.com/dubh3124).
 
+
+https://github.com/user-attachments/assets/6b475c55-d819-4684-a7db-f70d4ca6ea06
+
+
 ## Baseline
 
 - Strict A2A v1 is the default and never silently downgrades.
