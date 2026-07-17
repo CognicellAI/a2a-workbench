@@ -50,10 +50,12 @@ describe("connection normalization", () => {
     });
   });
 
-  it("does not persist secret header values", () => {
+  it("persists safe connection preferences but never headers or OAuth credentials", () => {
     expect(
       toPersistableConnection({
         upstream: "https://agent.example.com/a2a",
+        mode: "strict",
+        binding: "HTTP+JSON",
         a2uiTrigger: "[a2ui]",
         headers: [
           { name: "Authorization", value: "Bearer abc", enabled: true, secret: true },
@@ -71,11 +73,10 @@ describe("connection normalization", () => {
       }),
     ).toEqual({
       upstream: "https://agent.example.com/a2a",
+      mode: "strict",
+      binding: "HTTP+JSON",
       a2uiTrigger: "[a2ui]",
-      headers: [
-        { name: "Authorization", value: "", enabled: true, secret: true },
-        { name: "X-Trace", value: "trace-1", enabled: true, secret: false },
-      ],
+      headers: [],
       oauth: {
         enabled: false,
         tokenUrl: "",
@@ -116,7 +117,7 @@ describe("connection normalization", () => {
     });
   });
 
-  it("redacts and does not persist M2M OAuth secrets", () => {
+  it("redacts and does not persist M2M OAuth credentials", () => {
     const oauth = {
       enabled: true,
       tokenUrl: "https://issuer.example.com/oauth/token",
@@ -131,14 +132,22 @@ describe("connection normalization", () => {
       ...oauth,
       clientSecret: "[redacted]",
     });
-    expect(
-      toPersistableConnection({
-        upstream: "https://agent.example.com/a2a",
-        a2uiTrigger: "[a2ui]",
-        headers: [],
-        oauth,
-      }).oauth.clientSecret,
-    ).toBe("");
+    expect(toPersistableConnection({
+      upstream: "https://agent.example.com/a2a",
+      mode: "strict",
+      binding: "HTTP+JSON",
+      a2uiTrigger: "[a2ui]",
+      headers: [],
+      oauth,
+    }).oauth).toEqual({
+      enabled: false,
+      tokenUrl: "",
+      clientId: "",
+      clientSecret: "",
+      scope: "",
+      audience: "",
+      authMethod: "client_secret_basic",
+    });
   });
 
   it("requires OAuth fields only when enabled", () => {

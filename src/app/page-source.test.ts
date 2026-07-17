@@ -56,4 +56,35 @@ describe("workbench source guardrails", () => {
     expect(css).toContain("#ba50e0");
     expect(css).toContain("#4771f0");
   });
+
+  it("keeps Protocol Lab available to both profiles and exposes structured Parts", () => {
+    const source = readFileSync(join(root, "src/components/workbench-client.tsx"), "utf8");
+    const composer = readFileSync(join(root, "src/components/part-composer.tsx"), "utf8");
+
+    expect(source).toContain("Quick Test");
+    expect(source).toContain("Protocol Lab");
+    expect(source).toContain('if (value === "lab")');
+    expect(source).toContain('const structuredComposer = workspace === "lab" && messageRequired;');
+    expect(composer).toContain("Compose strict A2A v1 text, data, raw, and URL Parts.");
+    expect(composer).toContain("Compatibility evidence is non-conformant.");
+  });
+
+  it("isolates the A2UI renderer behind a negotiated lazy client leaf", () => {
+    const source = readFileSync(join(root, "src/components/workbench-client.tsx"), "utf8");
+    const stage = readFileSync(join(root, "src/components/a2ui-stage.tsx"), "utf8");
+
+    expect(source).toContain('import("@/components/a2ui-stage")');
+    expect(source).not.toContain("A2uiSurface");
+    expect(stage).toContain("A2uiSurface");
+    expect(stage).toContain("injectStyles");
+  });
+
+  it("uses one mobile workspace pane at a time", () => {
+    const source = readFileSync(join(root, "src/components/workbench-client.tsx"), "utf8");
+
+    expect(source).toContain('aria-label="Mobile workspace panes"');
+    expect(source).toContain("Compose and result");
+    expect(source).toContain('mobilePane === "workspace" ? "flex" : "hidden"');
+    expect(source).toContain('mobilePane === "inspector" ? "flex" : "hidden"');
+  });
 });

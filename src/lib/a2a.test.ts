@@ -6,6 +6,7 @@ import {
   extractA2aMeta,
   extractA2aStatus,
   extractA2uiEnvelopes,
+  extractNegotiatedA2uiEnvelopes,
   extractTextParts,
   withA2uiTrigger,
 } from "@/lib/a2a";
@@ -201,6 +202,27 @@ describe("A2A extraction", () => {
       },
     ]);
   });
+
+  it("keeps text-triggered A2UI out of strict negotiated extraction", () => {
+    const textOnly = {
+      message: {
+        parts: [{
+          text: "```a2ui\n{\"version\":\"v0.9\",\"updateDataModel\":{\"data\":{\"unsafe\":true}}}\n```",
+        }],
+      },
+    };
+    expect(extractNegotiatedA2uiEnvelopes(textOnly)).toEqual([]);
+
+    const negotiatedPart = {
+      message: {
+        parts: [{
+          mediaType: "application/a2ui+json",
+          data: { version: "v0.9", updateDataModel: { data: { safe: true } } },
+        }],
+      },
+    };
+    expect(extractNegotiatedA2uiEnvelopes(negotiatedPart).length).toBeGreaterThan(0);
+  });
 });
 
 describe("redaction", () => {
@@ -217,6 +239,18 @@ describe("redaction", () => {
         apiKey: "[redacted]",
         normal: "visible",
       },
+    });
+  });
+
+  it("keeps authentication scheme metadata visible while redacting values", () => {
+    expect(redactSecrets({
+      apiKeySecurityScheme: { name: "X-Agent-Key", location: "header" },
+      tokenUrl: "https://identity.example/token",
+      accessToken: "secret-token",
+    })).toEqual({
+      apiKeySecurityScheme: { name: "X-Agent-Key", location: "header" },
+      tokenUrl: "https://identity.example/token",
+      accessToken: "[redacted]",
     });
   });
 });

@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -19,6 +20,7 @@
 
 # production
 /build
+**/dist/
 
 # misc
 .DS_Store
@@ -41,3 +43,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+/packages/*/vitest.config.js
+/packages/*/vitest.config.js.map
+/packages/*/vitest.config.d.ts
+/packages/*/vitest.config.d.ts.map

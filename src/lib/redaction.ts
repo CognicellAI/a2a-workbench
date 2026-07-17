@@ -1,4 +1,5 @@
 const SECRET_KEY_PATTERN = /(authorization|api[-_ ]?key|apikey|token|secret|credential|password|bearer)/i;
+const SAFE_PROTOCOL_METADATA_KEY = /^(?:apiKeySecurityScheme|httpAuthSecurityScheme|oauth2SecurityScheme|openIdConnectSecurityScheme|mtlsSecurityScheme|tokenUrl|refreshUrl|oauth2MetadataUrl|openIdConnectUrl|bearerFormat|clientCredentials)$/i;
 
 export function redactSecrets(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -12,9 +13,13 @@ export function redactSecrets(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [
       key,
-      SECRET_KEY_PATTERN.test(key) ? "[redacted]" : redactSecrets(nested),
+      isSecretKey(key) ? "[redacted]" : redactSecrets(nested),
     ]),
   );
+}
+
+function isSecretKey(key: string): boolean {
+  return !SAFE_PROTOCOL_METADATA_KEY.test(key) && SECRET_KEY_PATTERN.test(key);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

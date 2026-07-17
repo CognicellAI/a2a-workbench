@@ -1,0 +1,338 @@
+{
+  "schemaVersion": 1,
+  "reportLabel": "A2A v1 client conformance — spec/TCK-derived",
+  "generatedFor": "@a2a-workbench/client@0.1.0",
+  "sources": {
+    "specification": {
+      "version": "1.0.0",
+      "revision": "173695755607e884aa9acf8ce4feed90e32727a1",
+      "url": "https://a2a-protocol.org/v1.0.0/specification/"
+    },
+    "tck": {
+      "revision": "5996b79f9cefa6fc390980e383e358a66fb9e49e",
+      "url": "https://github.com/a2aproject/a2a-tck"
+    },
+    "javascriptSdk": {
+      "package": "@a2a-js/sdk@1.0.0-beta.0",
+      "repositoryRevisionObserved": "cfeed0d70",
+      "url": "https://github.com/a2aproject/a2a-js"
+    },
+    "schemaSnapshot": {
+      "path": "packages/client/src/schema/a2a-v1.schema.json",
+      "sha256": "eb5ad5100ee00abd6f01cbb2675bf5739ed313594b6cc6a9d0111647fbfde7d6"
+    },
+    "pythonInteropFixture": {
+      "package": "a2a-sdk[http-server]==1.1.0",
+      "workflow": ".github/workflows/a2a-interop.yml"
+    }
+  },
+  "supported": [
+    "A2A v1.0 strict discovery",
+    "JSON-RPC over HTTP with SSE",
+    "HTTP+JSON with SSE",
+    "send, stream, get, list, cancel, subscribe, and extended Agent Card",
+    "Agent Card HTTP caching and trusted JWS verification",
+    "header API key, HTTP Basic, HTTP Bearer, OAuth2 client credentials, and explicit custom headers"
+  ],
+  "unsupported": [
+    { "feature": "gRPC", "reason": "Not part of the first client release." },
+    { "feature": "push-notification management or webhook hosting", "reason": "Not part of the first client release." },
+    { "feature": "interactive OAuth, OpenID Connect, or device authorization", "reason": "Requires an interactive host flow and fails with UNSUPPORTED_AUTHENTICATION." },
+    { "feature": "mutual TLS", "reason": "Requires host-specific key material and fails with UNSUPPORTED_AUTHENTICATION." }
+  ],
+  "requirements": [
+    {
+      "id": "VER-CLIENT-001",
+      "source": "tck",
+      "section": "3.6.1",
+      "level": "MUST",
+      "title": "Send A2A-Version on every request",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-TRANSPORT", "CMP-CARD"],
+      "tests": ["packages/client/src/client.test.ts#supports discovery and the core task lifecycle"]
+    },
+    {
+      "id": "VER-CLIENT-002",
+      "source": "tck",
+      "section": "3.6",
+      "level": "MUST",
+      "title": "Ignore patch versions during version negotiation",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-NEGOTIATOR"],
+      "tests": ["packages/client/src/client.test.ts#ignores patch versions during v1 protocol negotiation"]
+    },
+    {
+      "id": "CARD-EXT-001",
+      "source": "tck",
+      "section": "3.1.11",
+      "level": "MUST",
+      "title": "Authenticate extended Agent Card requests",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-CREDENTIALS", "CMP-FACADE"],
+      "tests": ["packages/client/src/client.test.ts#preserves security requirement OR alternatives and AND groups"]
+    },
+    {
+      "id": "SPEC-8.3.2-CLIENT-SELECTION",
+      "source": "specification",
+      "section": "8.3.2",
+      "level": "MUST",
+      "title": "Select the first supported interface and use its URL",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-NEGOTIATOR", "CMP-TRANSPORT"],
+      "tests": ["packages/client/src/client.test.ts#selects the first supported interface in declared order"]
+    },
+    {
+      "id": "SPEC-8.4.3-SIGNATURE-VERIFICATION",
+      "source": "specification",
+      "section": "8.4.3",
+      "level": "MUST",
+      "title": "Verify signed Agent Cards over their canonical payload",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-SIGNATURE"],
+      "tests": ["packages/client/src/client.test.ts#verifies present signatures and rejects signed cards without trust"]
+    },
+    {
+      "id": "SPEC-8.4.3-KEY-VALIDITY",
+      "source": "specification",
+      "section": "8.4.3",
+      "level": "MUST_NOT",
+      "title": "Do not accept expired or revoked verification keys",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-SIGNATURE", "EXT-TRUST"],
+      "tests": ["packages/client/src/client.test.ts#verifies present signatures and rejects signed cards without trust"]
+    },
+    {
+      "id": "SPEC-5.6-UTC-TIMESTAMPS",
+      "source": "specification",
+      "section": "5.6",
+      "level": "MUST",
+      "title": "Parse protocol timestamps as ISO 8601 UTC",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-VALIDATOR"],
+      "tests": ["packages/client/src/client.test.ts#rejects non-UTC timestamps and mismatched message identifiers"]
+    },
+    {
+      "id": "SPEC-5.1-BINDING-EQUIVALENCE",
+      "source": "specification",
+      "section": "5.1",
+      "level": "MUST",
+      "title": "Provide functionally equivalent data across supported bindings",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-FACADE", "CMP-TRANSPORT", "CMP-VALIDATOR"],
+      "tests": ["packages/client/src/client.test.ts#supports discovery and the core task lifecycle"]
+    },
+    {
+      "id": "SPEC-9.2-SERVICE-PARAMETERS",
+      "source": "specification",
+      "section": "9.2",
+      "level": "MUST",
+      "title": "Transmit JSON-RPC service parameters as HTTP headers",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-TRANSPORT"],
+      "tests": ["packages/client/src/client.test.ts#supports discovery and the core task lifecycle"]
+    },
+    {
+      "id": "SPEC-11.2-SERVICE-PARAMETERS",
+      "source": "specification",
+      "section": "11.2",
+      "level": "MUST",
+      "title": "Transmit HTTP+JSON service parameters as HTTP headers",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-TRANSPORT"],
+      "tests": ["packages/client/src/client.test.ts#supports discovery and the core task lifecycle"]
+    },
+    {
+      "id": "SPEC-9.3-JSONRPC-ENVELOPE",
+      "source": "specification",
+      "section": "9.3",
+      "level": "MUST",
+      "title": "Generate and validate JSON-RPC 2.0 envelopes",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-TRANSPORT", "CMP-VALIDATOR"],
+      "tests": ["packages/client/src/client.test.ts#rejects malformed cards, oversized responses, and wrong JSON-RPC ids"]
+    },
+    {
+      "id": "SPEC-8.6.2-CARD-CACHE",
+      "source": "specification",
+      "section": "8.6.2",
+      "level": "SHOULD",
+      "title": "Honor Agent Card freshness and conditional requests",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-CACHE", "CMP-CARD"],
+      "tests": ["packages/client/src/client.test.ts#honors fresh card caching and conditional revalidation"]
+    },
+    {
+      "id": "BASELINE-TENANT-PROPAGATION",
+      "source": "client-baseline",
+      "section": "bindings",
+      "level": "BASELINE",
+      "title": "Propagate the selected interface tenant on every lifecycle operation",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-NEGOTIATOR", "CMP-TRANSPORT"],
+      "tests": ["packages/client/src/client.test.ts#supports discovery and the core task lifecycle"]
+    },
+    {
+      "id": "BASELINE-EXTENSION-NEGOTIATION",
+      "source": "client-baseline",
+      "section": "4.6",
+      "level": "BASELINE",
+      "title": "Negotiate extensions explicitly and fail on unrequested required extensions",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-NEGOTIATOR"],
+      "tests": ["packages/client/src/client.test.ts#fails closed when the Agent Card requires an unrequested extension"]
+    },
+    {
+      "id": "BASELINE-SECURITY-OR-AND",
+      "source": "client-baseline",
+      "section": "7.3",
+      "level": "BASELINE",
+      "title": "Preserve OpenAPI security OR alternatives and AND groups",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-CREDENTIALS", "CMP-NEGOTIATOR"],
+      "tests": ["packages/client/src/client.test.ts#preserves security requirement OR alternatives and AND groups"]
+    },
+    {
+      "id": "BASELINE-STATIC-CREDENTIALS",
+      "source": "client-baseline",
+      "section": "7.3",
+      "level": "BASELINE",
+      "title": "Support header API key, Basic, Bearer, and explicit custom headers",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-CREDENTIALS"],
+      "tests": [
+        "packages/client/src/client.test.ts#applies the first satisfiable security requirement",
+        "packages/client/src/client.test.ts#supports Basic, Bearer, and explicit custom-header credentials"
+      ]
+    },
+    {
+      "id": "BASELINE-OAUTH2-CLIENT-CREDENTIALS",
+      "source": "client-baseline",
+      "section": "7.3",
+      "level": "BASELINE",
+      "title": "Acquire and reuse OAuth2 client-credentials tokens",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-CREDENTIALS", "EXT-AUTH"],
+      "tests": ["packages/client/src/client.test.ts#obtains and caches OAuth2 client-credentials tokens"]
+    },
+    {
+      "id": "BASELINE-STREAM-VALIDATION",
+      "source": "client-baseline",
+      "section": "3.5",
+      "level": "BASELINE",
+      "title": "Decode fragmented SSE and validate every wire event",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-STREAM", "CMP-VALIDATOR"],
+      "tests": [
+        "packages/client/src/client.test.ts#validates fragmented SSE events and recursively redacts evidence",
+        "packages/client/src/client.test.ts#rejects undeclared streaming and malformed individual SSE events"
+      ]
+    },
+    {
+      "id": "BASELINE-CAPABILITY-GATE",
+      "source": "client-baseline",
+      "section": "3.3.4",
+      "level": "BASELINE",
+      "title": "Reject operations whose required capability is undeclared",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-FACADE", "CMP-NEGOTIATOR"],
+      "tests": ["packages/client/src/client.test.ts#rejects undeclared streaming and malformed individual SSE events"]
+    },
+    {
+      "id": "BASELINE-PROTOCOL-ERRORS",
+      "source": "client-baseline",
+      "section": "3.3.2",
+      "level": "BASELINE",
+      "title": "Map binding-specific A2A errors to stable typed client errors",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-TRANSPORT", "CMP-FACADE"],
+      "tests": ["packages/client/src/client.test.ts#maps protocol task errors to stable client errors"]
+    },
+    {
+      "id": "BASELINE-RAW-EVIDENCE",
+      "source": "client-baseline",
+      "section": "observability",
+      "level": "BASELINE",
+      "title": "Retain forward fields in bounded raw evidence and redact credentials",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-EVIDENCE", "CMP-STREAM"],
+      "tests": ["packages/client/src/client.test.ts#validates fragmented SSE events and recursively redacts evidence"]
+    },
+    {
+      "id": "BASELINE-HOST-NETWORK-POLICY",
+      "source": "client-baseline",
+      "section": "security",
+      "level": "BASELINE",
+      "title": "Reject insecure production URLs, unsafe redirects, private hosts, and oversized responses",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-NETWORK", "CMP-ROUTE"],
+      "tests": [
+        "packages/client/src/client.test.ts#rejects insecure production URLs and cross-origin redirects",
+        "src/app/api/a2a/stream/route.test.ts#blocks private-network targets before fetching",
+        "src/app/api/a2a/stream/route.test.ts#surfaces response limits as typed client errors"
+      ]
+    },
+    {
+      "id": "BASELINE-STRICT-COMPAT-SEPARATION",
+      "source": "client-baseline",
+      "section": "architecture",
+      "level": "BASELINE",
+      "title": "Keep legacy and direct-endpoint behavior out of the strict root API",
+      "applicable": true,
+      "status": "tested",
+      "architectureOwners": ["CMP-COMPAT", "CMP-FACADE"],
+      "tests": ["scripts/check-package-exports.mjs#client package internals must not be importable"]
+    },
+    {
+      "id": "SPEC-4.3-PUSH-ACK",
+      "source": "specification",
+      "section": "4.3",
+      "level": "MUST",
+      "title": "Acknowledge received push notifications",
+      "applicable": false,
+      "status": "not-applicable",
+      "reason": "The first release does not host push-notification callbacks."
+    },
+    {
+      "id": "SPEC-4.3-PUSH-TASK-CORRELATION",
+      "source": "specification",
+      "section": "4.3",
+      "level": "MUST",
+      "title": "Validate task identifiers in push notifications",
+      "applicable": false,
+      "status": "not-applicable",
+      "reason": "The first release does not host push-notification callbacks."
+    },
+    {
+      "id": "SPEC-10-GRPC",
+      "source": "specification",
+      "section": "10",
+      "level": "BASELINE",
+      "title": "gRPC binding",
+      "applicable": false,
+      "status": "not-applicable",
+      "reason": "gRPC is explicitly outside the first release binding baseline."
+    }
+  ]
+}

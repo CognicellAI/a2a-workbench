@@ -161,13 +161,28 @@ export function extractA2uiEnvelopes(payload: unknown): unknown[] {
   return getPayloadCandidates(payload).flatMap((candidate) => normalizeA2uiPayload(candidate));
 }
 
+export function extractNegotiatedA2uiEnvelopes(payload: unknown): unknown[] {
+  return getParts(payload).flatMap((part) => {
+    const record = readRecord(part);
+    if (!record) {
+      return [];
+    }
+    const data = extractA2uiDataFromPart(record);
+    return data === undefined ? [] : normalizeA2uiPayload(data);
+  });
+}
+
 function extractA2uiDataFromPart(part: RecordValue): unknown | undefined {
-  if (isA2uiMimeType(part.mimeType) || isA2uiMimeType(readRecord(part.metadata)?.mimeType)) {
+  const metadata = readRecord(part.metadata);
+  if (isA2uiMimeType(part.mediaType) || isA2uiMimeType(part.mimeType) ||
+    isA2uiMimeType(metadata?.mediaType) || isA2uiMimeType(metadata?.mimeType)) {
     return part.data ?? part;
   }
 
   const data = readRecord(part.data);
-  if (data && (isA2uiMimeType(data.mimeType) || isA2uiMimeType(readRecord(data.metadata)?.mimeType))) {
+  const dataMetadata = readRecord(data?.metadata);
+  if (data && (isA2uiMimeType(data.mediaType) || isA2uiMimeType(data.mimeType) ||
+    isA2uiMimeType(dataMetadata?.mediaType) || isA2uiMimeType(dataMetadata?.mimeType))) {
     return data.data ?? data.value ?? data;
   }
 

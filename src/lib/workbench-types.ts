@@ -10,9 +10,54 @@ export type HeaderInput = {
 
 export type ConnectionProfileInput = {
   upstream?: unknown;
+  mode?: unknown;
+  binding?: unknown;
   a2uiTrigger?: unknown;
   headers?: unknown;
   oauth?: unknown;
+};
+
+export type WorkbenchMode = "strict" | "compatibility";
+export type WorkbenchOperation =
+  | "connect"
+  | "sendMessage"
+  | "sendStreamingMessage"
+  | "getTask"
+  | "listTasks"
+  | "cancelTask"
+  | "subscribeToTask"
+  | "getExtendedAgentCard";
+
+export const WORKBENCH_PART_KINDS = ["text", "data", "raw", "url"] as const;
+export type WorkbenchPartKind = (typeof WORKBENCH_PART_KINDS)[number];
+
+/**
+ * Untrusted browser input for one A2A v1 Part. The route validates this before
+ * constructing the package's public `Part` union.
+ */
+export type WorkbenchPartInput = {
+  readonly kind?: unknown;
+  readonly text?: unknown;
+  readonly data?: unknown;
+  readonly raw?: unknown;
+  readonly url?: unknown;
+  readonly mediaType?: unknown;
+  readonly filename?: unknown;
+  readonly metadata?: unknown;
+};
+
+/**
+ * Untrusted browser input for the message portion of a strict send operation.
+ * Compatibility mode accepts only the legacy text `message` field.
+ */
+export type WorkbenchMessageInput = {
+  readonly messageId?: unknown;
+  readonly contextId?: unknown;
+  readonly taskId?: unknown;
+  readonly parts?: unknown;
+  readonly metadata?: unknown;
+  readonly extensions?: unknown;
+  readonly referenceTaskIds?: unknown;
 };
 
 export type M2mOAuthAuthMethod = "client_secret_basic" | "client_secret_post";
@@ -75,21 +120,16 @@ export type A2aStatus = {
 
 export type WorkbenchError = {
   message: string;
+  code?: string;
   detail?: unknown;
   status?: number;
 };
 
 export type WorkbenchEvent =
-  | {
-      type: "request";
-      data: {
-        upstream: string;
-        headers: Record<string, string>;
-        oauth?: Record<string, unknown>;
-        oauthToken?: { tokenType: string; expiresIn?: number };
-        body: unknown;
-      };
-    }
+  | { type: "request"; data: unknown }
+  | { type: "connection"; data: unknown }
+  | { type: "agent-card"; data: unknown }
+  | { type: "evidence"; data: unknown }
   | { type: "raw"; data: SseFrame }
   | { type: "a2a"; data: unknown }
   | { type: "meta"; data: A2aMeta }
@@ -126,6 +166,8 @@ export type PersistedM2mOAuth = {
 
 export type PersistedConnection = {
   upstream: string;
+  mode: WorkbenchMode;
+  binding: "JSONRPC" | "HTTP+JSON";
   a2uiTrigger: string;
   headers: PersistedHeader[];
   oauth: PersistedM2mOAuth;

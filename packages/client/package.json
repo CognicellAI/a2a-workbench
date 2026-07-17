@@ -1,0 +1,41 @@
+{
+  "name": "@a2a-workbench/client",
+  "version": "0.1.0",
+  "description": "Strict A2A v1 client core for Node.js",
+  "license": "MIT",
+  "type": "module",
+  "private": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./compat": {
+      "types": "./dist/compat/index.d.ts",
+      "import": "./dist/compat/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "1.0.0-beta.0",
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "jose": "6.2.3",
+    "typescript": "^5",
+    "vitest": "^4.1.9"
+  }
+}

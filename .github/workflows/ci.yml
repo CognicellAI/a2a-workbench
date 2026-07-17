@@ -23,6 +23,12 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Architecture documentation
+        run: npm run docs:check
+
+      - name: Conformance manifest
+        run: npm run conformance:check
+
       - name: Lint
         run: npm run lint
 
@@ -34,3 +40,39 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Package export smoke test
+        run: node scripts/check-package-exports.mjs
+
+      - name: Publish client conformance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2a-v1-client-conformance-spec-tck-derived
+          path: |
+            conformance/README.md
+            conformance/client-requirements.json
+
+  client-node-20:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test and typecheck client package
+        run: |
+          npm run test --workspace @a2a-workbench/client
+          npm run typecheck --workspace @a2a-workbench/client
+
+      - name: Build and smoke-test package exports
+        run: npm run package:smoke

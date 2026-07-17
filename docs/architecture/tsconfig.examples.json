@@ -1,0 +1,12 @@
+{
+  "extends": "../../packages/client/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "types": ["node"],
+    "paths": {
+      "@a2a-workbench/client": ["packages/client/src/index.ts"],
+      "@a2a-workbench/client/compat": ["packages/client/src/compat/index.ts"]
+    }
+  },
+  "include": ["examples/**/*.ts"]
+}

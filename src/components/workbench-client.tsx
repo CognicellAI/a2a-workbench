@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
@@ -15,16 +16,18 @@ import {
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  A2uiSurface,
-  MarkdownContext,
-  basicCatalog,
-  type ReactComponentImplementation,
-} from "@a2ui/react/v0_9";
-import { injectStyles, removeStyles } from "@a2ui/react/styles";
+import { basicCatalog, type ReactComponentImplementation } from "@a2ui/react/v0_9";
 import { MessageProcessor, type A2uiMessage, type SurfaceModel } from "@a2ui/web_core/v0_9";
+import { PartComposer } from "@/components/part-composer";
+import { A2UI_EXTENSION_URI } from "@/lib/a2ui";
 import { mergeAssistantTranscriptText } from "@/lib/chat-transcript";
 import { DEFAULT_A2UI_TRIGGER, toPersistableConnection } from "@/lib/connection";
+import {
+  MessageDraftValidationError,
+  createMessagePartDraft,
+  toWorkbenchPartInputs,
+  type MessagePartDraft,
+} from "@/lib/message-draft";
 import { parseSseBuffer } from "@/lib/sse";
 import type {
   A2aMeta,
@@ -36,11 +39,15 @@ import type {
   SseFrame,
   WorkbenchError,
   WorkbenchEventType,
+  WorkbenchMode,
+  WorkbenchOperation,
 } from "@/lib/workbench-types";
 
 type HeaderRow = PersistedHeader & { id: string };
 type RunState = "idle" | "streaming" | "complete" | "failed" | "aborted";
-type InspectorTab = "run" | "request" | "raw" | "a2a" | "a2ui" | "meta";
+type InspectorTab = "run" | "contract" | "request" | "raw" | "a2a" | "a2ui" | "meta";
+type Workspace = "quick" | "lab";
+type MobilePane = "workspace" | "inspector";
 
 type TimelineEntry = {
   id: string;
@@ -57,14 +64,15 @@ type ClientActionEntry = {
 
 const CONNECTION_STORAGE_KEY = "a2a-workbench.connection";
 const SPLIT_STORAGE_KEY = "a2a-workbench.split";
-const INSPECTOR_SPLIT_STORAGE_KEY = "a2a-workbench.inspectorSplit";
 const CONNECTION_PANEL_STORAGE_KEY = "a2a-workbench.connectionPanelOpen";
+const WORKSPACE_STORAGE_KEY = "a2a-workbench.workspace";
 const DEFAULT_SPLIT = 44;
 const MIN_SPLIT = 30;
 const MAX_SPLIT = 70;
-const DEFAULT_INSPECTOR_SPLIT = 72;
-const MIN_INSPECTOR_SPLIT = 56;
-const MAX_INSPECTOR_SPLIT = 84;
+const LazyA2uiStage = dynamic(
+  () => import("@/components/a2ui-stage").then((module) => module.A2uiStage),
+  { ssr: false, loading: () => <EmptyInspectorState message="Loading negotiated A2UI renderer." /> },
+);
 const chatMarkdownPlugins = [remarkGfm];
 const chatMarkdownComponents: Components = {
   p: ({ children }) => <p className="mb-3 text-sm leading-6 text-ink last:mb-0">{children}</p>,
@@ -166,16 +174,27 @@ const defaultHeaders: HeaderRow[] = [
 
 export function WorkbenchClient() {
   const [upstream, setUpstream] = useState("");
+  const [mode, setMode] = useState<WorkbenchMode>("strict");
+  const [workspace, setWorkspace] = useState<Workspace>("quick");
+  const [mobilePane, setMobilePane] = useState<MobilePane>("workspace");
+  const [binding, setBinding] = useState<"JSONRPC" | "HTTP+JSON">("HTTP+JSON");
+  const [operation, setOperation] = useState<WorkbenchOperation>("sendStreamingMessage");
   const [a2uiTrigger, setA2uiTrigger] = useState(DEFAULT_A2UI_TRIGGER);
   const [headers, setHeaders] = useState<HeaderRow[]>(defaultHeaders);
   const [oauth, setOauth] = useState<PersistedM2mOAuth>(defaultM2mOAuth);
   const [contextId, setContextId] = useState("");
+  const [taskId, setTaskId] = useState("");
+  const [pageSize, setPageSize] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [messageParts, setMessageParts] = useState<readonly MessagePartDraft[]>([
+    createMessagePartDraft("part-text", "text"),
+  ]);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [runState, setRunState] = useState<RunState>("idle");
   const [status, setStatus] = useState<A2aStatus | undefined>();
   const [meta, setMeta] = useState<A2aMeta>({});
   const [requestInfo, setRequestInfo] = useState<unknown>();
+  const [agentCard, setAgentCard] = useState<unknown>();
   const [rawFrames, setRawFrames] = useState<unknown[]>([]);
   const [a2aFrames, setA2aFrames] = useState<unknown[]>([]);
   const [a2uiEvents, setA2uiEvents] = useState<unknown[]>([]);
@@ -183,14 +202,35 @@ export function WorkbenchClient() {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [activeTab, setActiveTab] = useState<InspectorTab>("run");
   const [split, setSplit] = useState(DEFAULT_SPLIT);
-  const [inspectorSplit, setInspectorSplit] = useState(DEFAULT_INSPECTOR_SPLIT);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [surfaces, setSurfaces] = useState<SurfaceModel<ReactComponentImplementation>[]>([]);
   const [clientActions, setClientActions] = useState<ClientActionEntry[]>([]);
   const failedStatusRef = useRef(false);
+  const previousModeRef = useRef<WorkbenchMode>(mode);
   const assistantMessageIdRef = useRef<string | null>(null);
   const assistantTextRef = useRef("");
+
+  const handleModeChange = useCallback((value: WorkbenchMode) => {
+    setMode(value);
+    if (value === "compatibility") {
+      setOperation((current) =>
+        current === "connect" || current === "sendMessage" || current === "sendStreamingMessage"
+          ? current
+          : "sendStreamingMessage",
+      );
+    }
+  }, []);
+
+  const handleWorkspaceChange = useCallback((value: Workspace) => {
+    if (value === "lab") {
+      setWorkspace("lab");
+      setConnectionOpen(false);
+      setActiveTab("contract");
+      return;
+    }
+    setWorkspace("quick");
+  }, []);
 
   const processor = useMemo(
     () =>
@@ -249,6 +289,30 @@ export function WorkbenchClient() {
     assistantTextRef.current = "";
   }, []);
 
+  useEffect(() => {
+    if (previousModeRef.current === mode) return;
+    previousModeRef.current = mode;
+    abortController?.abort();
+    failedStatusRef.current = false;
+    resetAssistantTranscript();
+    setRunState("idle");
+    setStatus(undefined);
+    setMeta({});
+    setContextId("");
+    setTaskId("");
+    setPageSize("");
+    setChat([]);
+    setErrors([]);
+    setTimeline([]);
+    setRawFrames([]);
+    setA2aFrames([]);
+    setA2uiEvents([]);
+    setRequestInfo(undefined);
+    setAgentCard(undefined);
+    setClientActions([]);
+    clearSurfaces();
+  }, [abortController, clearSurfaces, mode, resetAssistantTranscript]);
+
   const upsertAssistantTranscript = useCallback((text: string) => {
     setChat((current) => {
       const messageId = assistantMessageIdRef.current ?? newId();
@@ -301,8 +365,18 @@ export function WorkbenchClient() {
       addTimeline(type, data);
 
       switch (type) {
+        case "connection":
+          setRequestInfo((current: unknown) => mergeInspectorInfo(current, "connection", data));
+          break;
+        case "agent-card":
+          setAgentCard(data);
+          setRequestInfo((current: unknown) => mergeInspectorInfo(current, "agentCard", data));
+          break;
+        case "evidence":
+          setRawFrames((current) => limitList([...current, data], 160));
+          break;
         case "request":
-          setRequestInfo(data);
+          setRequestInfo((current: unknown) => mergeInspectorInfo(current, "request", data));
           break;
         case "raw":
           setRawFrames((current) => limitList([...current, data], 160));
@@ -315,6 +389,9 @@ export function WorkbenchClient() {
           setMeta((current) => ({ ...current, ...next }));
           if (next.contextId) {
             setContextId(next.contextId);
+          }
+          if (next.taskId) {
+            setTaskId(next.taskId);
           }
           break;
         }
@@ -381,18 +458,13 @@ export function WorkbenchClient() {
   );
 
   useEffect(() => {
-    injectStyles();
-    return () => {
-      removeStyles();
-    };
-  }, []);
-
-  useEffect(() => {
     const persisted = readPersistedConnection();
     if (persisted) {
       // LocalStorage hydration has to happen after mount because `window` is unavailable during SSR.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setUpstream(persisted.upstream);
+      setMode(persisted.mode);
+      setBinding(persisted.binding);
       setA2uiTrigger(persisted.a2uiTrigger || DEFAULT_A2UI_TRIGGER);
       setHeaders(
         persisted.headers.length > 0
@@ -407,35 +479,33 @@ export function WorkbenchClient() {
       setSplit(clamp(savedSplit, MIN_SPLIT, MAX_SPLIT));
     }
 
-    const savedInspectorSplit = Number(window.localStorage.getItem(INSPECTOR_SPLIT_STORAGE_KEY));
-    if (Number.isFinite(savedInspectorSplit)) {
-      setInspectorSplit(clamp(savedInspectorSplit, MIN_INSPECTOR_SPLIT, MAX_INSPECTOR_SPLIT));
-    }
-
     setConnectionOpen(window.localStorage.getItem(CONNECTION_PANEL_STORAGE_KEY) === "true");
+    setWorkspace(window.localStorage.getItem(WORKSPACE_STORAGE_KEY) === "lab" ? "lab" : "quick");
   }, []);
 
   useEffect(() => {
     const persistable = toPersistableConnection({
       upstream,
+      mode,
+      binding,
       a2uiTrigger,
       headers: stripHeaderIds(headers),
       oauth,
     });
     window.localStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(persistable));
-  }, [a2uiTrigger, headers, oauth, upstream]);
+  }, [a2uiTrigger, binding, headers, mode, oauth, upstream]);
 
   useEffect(() => {
     window.localStorage.setItem(SPLIT_STORAGE_KEY, String(split));
   }, [split]);
 
   useEffect(() => {
-    window.localStorage.setItem(INSPECTOR_SPLIT_STORAGE_KEY, String(inspectorSplit));
-  }, [inspectorSplit]);
-
-  useEffect(() => {
     window.localStorage.setItem(CONNECTION_PANEL_STORAGE_KEY, String(connectionOpen));
   }, [connectionOpen]);
+
+  useEffect(() => {
+    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, workspace);
+  }, [workspace]);
 
   useEffect(() => {
     return () => {
@@ -444,9 +514,10 @@ export function WorkbenchClient() {
     };
   }, [abortController, processor]);
 
-  const sendPrompt = useCallback(async () => {
+  const sendPrompt = useCallback(async (messageDraft?: { readonly parts: readonly unknown[] }) => {
     const message = prompt.trim();
-    if (!message || runState === "streaming") {
+    const messageRequired = operation === "sendMessage" || operation === "sendStreamingMessage";
+    if ((messageRequired && !message && !messageDraft) || runState === "streaming") {
       return;
     }
 
@@ -455,20 +526,39 @@ export function WorkbenchClient() {
     resetAssistantTranscript();
     setAbortController(controller);
     setRunState("streaming");
-    setStatus({ state: "streaming" });
+    setStatus({ state: operation });
     setErrors([]);
-    setPrompt("");
+    if (messageRequired && !messageDraft) {
+      setPrompt("");
+    }
     setRawFrames([]);
     setA2aFrames([]);
     setA2uiEvents([]);
     setRequestInfo(undefined);
+    setAgentCard(undefined);
     setTimeline([]);
 
     if (!contextId.trim()) {
       clearSurfaces();
     }
 
-    setChat((current) => limitList([...current, { id: newId(), role: "user", text: message }], 140));
+    setChat((current) =>
+      limitList(
+        [
+          ...current,
+          {
+            id: newId(),
+            role: messageRequired ? "user" : "system",
+            text: messageRequired
+              ? messageDraft
+                ? `Run ${operation} with ${messageDraft.parts.length} structured Part${messageDraft.parts.length === 1 ? "" : "s"}.`
+                : message
+              : `Run ${operation}`,
+          },
+        ],
+        140,
+      ),
+    );
 
     try {
       const response = await fetch("/api/a2a/stream", {
@@ -477,10 +567,16 @@ export function WorkbenchClient() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          operation,
           message,
+          messageDraft,
           contextId: contextId.trim() || undefined,
+          taskId: taskId.trim() || undefined,
+          pageSize: pageSize.trim() || undefined,
           connection: {
             upstream,
+            mode,
+            binding,
             a2uiTrigger,
             headers: stripHeaderIds(headers),
             oauth,
@@ -532,16 +628,34 @@ export function WorkbenchClient() {
   }, [
     a2uiTrigger,
     addError,
+    binding,
     clearSurfaces,
     contextId,
     handleWorkbenchFrame,
     headers,
+    mode,
     oauth,
+    operation,
     prompt,
     resetAssistantTranscript,
     runState,
+    taskId,
+    pageSize,
     upstream,
   ]);
+
+  const sendStructuredMessage = useCallback(() => {
+    try {
+      sendPrompt({ parts: toWorkbenchPartInputs(messageParts) });
+    } catch (error) {
+      const message = error instanceof MessageDraftValidationError
+        ? error.message
+        : "Unable to construct the message draft.";
+      addError({ message });
+      setRunState("failed");
+      setStatus({ state: "failed", message });
+    }
+  }, [addError, messageParts, sendPrompt]);
 
   const abortRun = useCallback(() => {
     abortController?.abort();
@@ -555,6 +669,8 @@ export function WorkbenchClient() {
     setStatus(undefined);
     setMeta({});
     setContextId("");
+    setTaskId("");
+    setPageSize("");
     setChat([]);
     setErrors([]);
     setTimeline([]);
@@ -562,6 +678,7 @@ export function WorkbenchClient() {
     setA2aFrames([]);
     setA2uiEvents([]);
     setRequestInfo(undefined);
+    setAgentCard(undefined);
     setClientActions([]);
     clearSurfaces();
   }, [abortController, clearSurfaces, resetAssistantTranscript]);
@@ -593,55 +710,97 @@ export function WorkbenchClient() {
     a2ui: a2uiEvents.length,
     errors: errors.length,
   };
+  const visibleInspectorTab: InspectorTab = activeTab === "a2ui" && surfaces.length === 0 && a2uiEvents.length === 0
+    ? "run"
+    : activeTab;
+  const operationUnavailable = getDisabledOperations(mode, agentCard).has(operation);
 
   return (
     <main className="flex h-[100dvh] min-h-0 flex-col gap-2 overflow-hidden p-2 text-ink">
-      <TopBar runState={runState} status={status} contextId={contextId} counts={runCounts} />
+      <TopBar
+        runState={runState}
+        status={status}
+        contextId={contextId}
+        mode={mode}
+        workspace={workspace}
+        counts={runCounts}
+        onWorkspaceChange={handleWorkspaceChange}
+      />
       <ConnectionPanel
         upstream={upstream}
+        mode={mode}
+        binding={binding}
+        operation={operation}
         a2uiTrigger={a2uiTrigger}
         headers={headers}
         oauth={oauth}
         contextId={contextId}
+        taskId={taskId}
+        pageSize={pageSize}
+        agentCard={agentCard}
         open={connectionOpen}
         onUpstreamChange={setUpstream}
+        onModeChange={handleModeChange}
+        onBindingChange={setBinding}
+        onOperationChange={setOperation}
         onTriggerChange={setA2uiTrigger}
         onContextChange={setContextId}
+        onTaskChange={setTaskId}
+        onPageSizeChange={setPageSize}
         onHeaderChange={updateHeader}
         onHeaderRemove={removeHeader}
         onHeaderAdd={addHeader}
         onOAuthChange={(patch) => setOauth((current) => ({ ...current, ...patch }))}
         onOpenChange={setConnectionOpen}
       />
+      <nav aria-label="Mobile workspace panes" className="workbench-panel flex shrink-0 gap-1 p-1 sm:hidden">
+        <button
+          type="button"
+          className="tab-button flex-1"
+          data-active={mobilePane === "workspace"}
+          aria-pressed={mobilePane === "workspace"}
+          onClick={() => setMobilePane("workspace")}
+        >
+          Compose and result
+        </button>
+        <button
+          type="button"
+          className="tab-button flex-1"
+          data-active={mobilePane === "inspector"}
+          aria-pressed={mobilePane === "inspector"}
+          onClick={() => setMobilePane("inspector")}
+        >
+          Inspect
+        </button>
+      </nav>
       <ResizableColumns
-        split={inspectorSplit}
-        minSplit={MIN_INSPECTOR_SPLIT}
-        maxSplit={MAX_INSPECTOR_SPLIT}
-        onSplitChange={setInspectorSplit}
-        label="Resize A2UI and protocol inspector panes"
+        split={split}
+        minSplit={MIN_SPLIT}
+        maxSplit={MAX_SPLIT}
+        onSplitChange={setSplit}
+        mobilePane={mobilePane}
+        label="Resize workspace and protocol inspector panes"
         className="workbench-panel min-h-0 flex-1"
       >
-        <ResizableColumns
-          split={split}
-          minSplit={MIN_SPLIT}
-          maxSplit={MAX_SPLIT}
-          onSplitChange={setSplit}
-          label="Resize chat and A2UI panes"
-          className="h-full min-h-0"
-        >
-          <ChatPane
-            chat={chat}
-            prompt={prompt}
-            runState={runState}
-            onPromptChange={setPrompt}
-            onSend={sendPrompt}
-            onAbort={abortRun}
-            onReset={resetRun}
-          />
-          <A2uiStage surfaces={surfaces} />
-        </ResizableColumns>
+        <ChatPane
+          chat={chat}
+          prompt={prompt}
+          runState={runState}
+          operation={operation}
+          operationUnavailable={operationUnavailable}
+          mode={mode}
+          workspace={workspace}
+          messageParts={messageParts}
+          onPromptChange={setPrompt}
+          onSend={sendPrompt}
+          onStructuredSend={sendStructuredMessage}
+          onMessagePartsChange={setMessageParts}
+          onCreatePartId={newId}
+          onAbort={abortRun}
+          onReset={resetRun}
+        />
         <ProtocolInspector
-          activeTab={activeTab}
+          activeTab={visibleInspectorTab}
           onTabChange={setActiveTab}
           timeline={timeline}
           errors={errors}
@@ -653,6 +812,8 @@ export function WorkbenchClient() {
           status={status}
           clientActions={clientActions}
           counts={runCounts}
+          surfaces={surfaces}
+          mode={mode}
         />
       </ResizableColumns>
     </main>
@@ -663,12 +824,18 @@ function TopBar({
   runState,
   status,
   contextId,
+  mode,
+  workspace,
   counts,
+  onWorkspaceChange,
 }: {
   runState: RunState;
   status?: A2aStatus;
   contextId: string;
+  mode: WorkbenchMode;
+  workspace: Workspace;
   counts: { raw: number; a2a: number; a2ui: number; errors: number };
+  onWorkspaceChange: (workspace: Workspace) => void;
 }) {
   return (
     <header className="workbench-panel flex min-h-14 items-center justify-between gap-4 px-3 py-2">
@@ -682,12 +849,35 @@ function TopBar({
         <div className="min-w-0">
           <p className="text-sm font-black tracking-normal text-white">A2A + A2UI Workbench</p>
           <p className="truncate text-xs font-medium text-muted">
-            Real message:send and message:stream traffic with protocol evidence and rendered A2UI surfaces
+            Strict A2A v1 discovery, lifecycle traffic, conformance evidence, and negotiated A2UI
           </p>
         </div>
       </div>
+      <nav aria-label="Workbench workspace" className="flex shrink-0 rounded-lg border border-white/10 bg-graphite-950/65 p-1">
+        <button
+          type="button"
+          className="tab-button"
+          data-active={workspace === "quick"}
+          aria-pressed={workspace === "quick"}
+          onClick={() => onWorkspaceChange("quick")}
+        >
+          Quick Test
+        </button>
+        <button
+          type="button"
+          className="tab-button"
+          data-active={workspace === "lab"}
+          aria-pressed={workspace === "lab"}
+          onClick={() => onWorkspaceChange("lab")}
+        >
+          Protocol Lab
+        </button>
+      </nav>
       <div className="hidden items-center gap-2 lg:flex">
         <StatusBadge runState={runState} status={status} />
+        <div className="rounded-lg border border-cyan/25 bg-cyan/10 px-3 py-2 font-mono text-[11px] font-black uppercase text-cyan-strong">
+          {mode === "strict" ? "Strict v1" : "Compatibility"}
+        </div>
         <Metric label="Raw" value={counts.raw} />
         <Metric label="A2A" value={counts.a2a} />
         <Metric label="A2UI" value={counts.a2ui} />
@@ -725,16 +915,55 @@ function Metric({ label, value, tone = "normal" }: { label: string; value: numbe
   );
 }
 
+function getDisabledOperations(mode: WorkbenchMode, agentCard: unknown): ReadonlySet<WorkbenchOperation> {
+  if (mode === "compatibility") {
+    return new Set<WorkbenchOperation>([
+      "getTask",
+      "listTasks",
+      "cancelTask",
+      "subscribeToTask",
+      "getExtendedAgentCard",
+    ]);
+  }
+  if (!isPlainRecord(agentCard) || !isPlainRecord(agentCard.capabilities)) return new Set<WorkbenchOperation>();
+
+  const capabilities = agentCard.capabilities;
+  const disabled = new Set<WorkbenchOperation>();
+  if (capabilities.streaming === false) {
+    disabled.add("sendStreamingMessage");
+    disabled.add("subscribeToTask");
+  }
+  if (capabilities.extendedAgentCard !== true) {
+    disabled.add("getExtendedAgentCard");
+  }
+  return disabled;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function ConnectionPanel({
   upstream,
+  mode,
+  binding,
+  operation,
   a2uiTrigger,
   headers,
   oauth,
   contextId,
+  taskId,
+  pageSize,
+  agentCard,
   open,
   onUpstreamChange,
+  onModeChange,
+  onBindingChange,
+  onOperationChange,
   onTriggerChange,
   onContextChange,
+  onTaskChange,
+  onPageSizeChange,
   onHeaderChange,
   onHeaderRemove,
   onHeaderAdd,
@@ -742,14 +971,25 @@ function ConnectionPanel({
   onOpenChange,
 }: {
   upstream: string;
+  mode: WorkbenchMode;
+  binding: "JSONRPC" | "HTTP+JSON";
+  operation: WorkbenchOperation;
   a2uiTrigger: string;
   headers: HeaderRow[];
   oauth: PersistedM2mOAuth;
   contextId: string;
+  taskId: string;
+  pageSize: string;
+  agentCard: unknown;
   open: boolean;
   onUpstreamChange: (value: string) => void;
+  onModeChange: (value: WorkbenchMode) => void;
+  onBindingChange: (value: "JSONRPC" | "HTTP+JSON") => void;
+  onOperationChange: (value: WorkbenchOperation) => void;
   onTriggerChange: (value: string) => void;
   onContextChange: (value: string) => void;
+  onTaskChange: (value: string) => void;
+  onPageSizeChange: (value: string) => void;
   onHeaderChange: (id: string, patch: Partial<HeaderRow>) => void;
   onHeaderRemove: (id: string) => void;
   onHeaderAdd: () => void;
@@ -757,6 +997,7 @@ function ConnectionPanel({
   onOpenChange: (value: boolean) => void;
 }) {
   const enabledHeaderCount = headers.filter((header) => header.enabled && header.name.trim()).length;
+  const disabledOperations = getDisabledOperations(mode, agentCard);
 
   return (
     <section className="workbench-panel grid gap-2 p-2">
@@ -768,6 +1009,12 @@ function ConnectionPanel({
           </span>
           <span className="max-w-[52ch] truncate rounded-lg border border-white/10 bg-graphite-950/60 px-2 py-1 font-mono text-[11px]">
             {upstream || "No upstream"}
+          </span>
+          <span className="rounded-lg border border-cyan/20 bg-cyan/10 px-2 py-1 font-mono text-[11px] text-cyan-strong">
+            {mode === "strict" ? "strict v1 / card-selected binding" : `compat / ${binding}`}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 font-mono text-[11px]">
+            {operation}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1">
             {oauth.enabled ? "OAuth on" : "OAuth off"}
@@ -794,34 +1041,98 @@ function ConnectionPanel({
 
       {open ? (
         <div className="grid gap-2 border-t border-white/10 pt-2 xl:grid-cols-[minmax(320px,0.92fr)_minmax(430px,1.18fr)_minmax(330px,0.9fr)]">
-          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_132px] xl:grid-cols-[minmax(0,1fr)_96px]">
-            <label className="grid gap-1.5">
+          <div className="grid gap-2 md:grid-cols-2">
+            <label className="grid gap-1.5 md:col-span-2">
               <span className="flex items-center gap-2 text-xs font-black text-muted">
                 <Link2 className="h-3.5 w-3.5 text-cyan" aria-hidden="true" />
-                A2A upstream
+                {mode === "strict" ? "Agent origin or Agent Card URL" : "Direct compatibility endpoint"}
               </span>
               <input
                 className="workbench-input workbench-input-compact"
-                placeholder="https://agent.example.com/a2a"
+                placeholder={mode === "strict" ? "https://agent.example.com" : "https://agent.example.com/message:stream"}
                 value={upstream}
                 onChange={(event) => onUpstreamChange(event.target.value)}
               />
             </label>
             <label className="grid gap-1.5">
-              <span className="text-xs font-black text-muted">A2UI trigger</span>
-              <input
+              <span className="text-xs font-black text-muted">Protocol profile</span>
+              <select
                 className="workbench-input workbench-input-compact"
-                value={a2uiTrigger}
-                onChange={(event) => onTriggerChange(event.target.value)}
-              />
+                value={mode}
+                onChange={(event) => onModeChange(event.target.value as WorkbenchMode)}
+              >
+                <option value="strict">Strict A2A v1</option>
+                <option value="compatibility">Compatibility direct endpoint</option>
+              </select>
             </label>
-            <label className="grid gap-1.5 md:col-span-2 xl:col-span-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-black text-muted">Compatibility binding</span>
+              <select
+                className="workbench-input workbench-input-compact"
+                value={binding}
+                disabled={mode === "strict"}
+                onChange={(event) => onBindingChange(event.target.value as "JSONRPC" | "HTTP+JSON")}
+              >
+                <option value="HTTP+JSON">HTTP+JSON</option>
+                <option value="JSONRPC">JSON-RPC</option>
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-black text-muted">Operation</span>
+              <select
+                className="workbench-input workbench-input-compact"
+                value={operation}
+                onChange={(event) => onOperationChange(event.target.value as WorkbenchOperation)}
+              >
+                <option value="connect">Connect / discover</option>
+                <option value="sendMessage">Send message</option>
+                <option value="sendStreamingMessage" disabled={disabledOperations.has("sendStreamingMessage")}>Send streaming message</option>
+                <option value="getTask" disabled={mode === "compatibility"}>Get task</option>
+                <option value="listTasks" disabled={mode === "compatibility"}>List tasks</option>
+                <option value="cancelTask" disabled={mode === "compatibility"}>Cancel task</option>
+                <option value="subscribeToTask" disabled={mode === "compatibility" || disabledOperations.has("subscribeToTask")}>Subscribe to task</option>
+                <option value="getExtendedAgentCard" disabled={mode === "compatibility" || disabledOperations.has("getExtendedAgentCard")}>Extended Agent Card</option>
+              </select>
+            </label>
+            <label className="grid gap-1.5">
               <span className="text-xs font-black text-muted">Context ID</span>
               <input
                 className="workbench-input workbench-input-compact font-mono text-xs"
                 placeholder="Returned by upstream"
                 value={contextId}
                 onChange={(event) => onContextChange(event.target.value)}
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-black text-muted">Task ID</span>
+              <input
+                className="workbench-input workbench-input-compact font-mono text-xs"
+                placeholder="Required for task operations"
+                value={taskId}
+                onChange={(event) => onTaskChange(event.target.value)}
+              />
+            </label>
+            {operation === "listTasks" ? (
+              <label className="grid gap-1.5">
+                <span className="text-xs font-black text-muted">Page size</span>
+                <input
+                  className="workbench-input workbench-input-compact font-mono text-xs"
+                  inputMode="numeric"
+                  placeholder="1 to 100"
+                  value={pageSize}
+                  onChange={(event) => onPageSizeChange(event.target.value)}
+                />
+              </label>
+            ) : null}
+            <label className="grid gap-1.5 md:col-span-2">
+              <span className="text-xs font-black text-muted">
+                {mode === "strict" ? "A2UI negotiation" : "Compatibility A2UI trigger"}
+              </span>
+              <input
+                className="workbench-input workbench-input-compact"
+                value={mode === "strict" ? A2UI_EXTENSION_URI : a2uiTrigger}
+                disabled={mode === "strict"}
+                onChange={(event) => onTriggerChange(event.target.value)}
               />
             </label>
           </div>
@@ -1001,6 +1312,7 @@ function ResizableColumns({
   minSplit,
   maxSplit,
   onSplitChange,
+  mobilePane,
   label,
   className,
   children,
@@ -1009,6 +1321,7 @@ function ResizableColumns({
   minSplit: number;
   maxSplit: number;
   onSplitChange: (value: number) => void;
+  mobilePane: MobilePane;
   label: string;
   className?: string;
   children: [ReactNode, ReactNode];
@@ -1049,7 +1362,7 @@ function ResizableColumns({
 
   return (
     <section ref={containerRef} className={`flex min-h-0 flex-col overflow-hidden sm:flex-row ${className ?? ""}`}>
-      <div className="flex min-h-0 flex-1 sm:h-full sm:basis-[var(--split)] sm:flex-none" style={splitStyle}>
+      <div className={`${mobilePane === "workspace" ? "flex" : "hidden"} min-h-0 flex-1 sm:flex sm:h-full sm:basis-[var(--split)] sm:flex-none`} style={splitStyle}>
         {children[0]}
       </div>
       <button
@@ -1084,7 +1397,7 @@ function ResizableColumns({
       >
         <span className="pointer-events-none absolute left-1/2 top-1/2 h-10 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan/35 transition group-hover:bg-cyan-strong/80 group-focus:bg-cyan-strong/80" />
       </button>
-      <div className="flex min-h-0 flex-1 sm:h-full">{children[1]}</div>
+      <div className={`${mobilePane === "inspector" ? "flex" : "hidden"} min-h-0 flex-1 sm:flex sm:h-full`}>{children[1]}</div>
     </section>
   );
 }
@@ -1093,27 +1406,49 @@ function ChatPane({
   chat,
   prompt,
   runState,
+  operation,
+  operationUnavailable,
+  mode,
+  workspace,
+  messageParts,
   onPromptChange,
   onSend,
+  onStructuredSend,
+  onMessagePartsChange,
+  onCreatePartId,
   onAbort,
   onReset,
 }: {
   chat: ChatMessage[];
   prompt: string;
   runState: RunState;
+  operation: WorkbenchOperation;
+  operationUnavailable: boolean;
+  mode: WorkbenchMode;
+  workspace: Workspace;
+  messageParts: readonly MessagePartDraft[];
   onPromptChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (messageDraft?: { readonly parts: readonly unknown[] }) => void;
+  onStructuredSend: () => void;
+  onMessagePartsChange: (parts: readonly MessagePartDraft[]) => void;
+  onCreatePartId: () => string;
   onAbort: () => void;
   onReset: () => void;
 }) {
   const streaming = runState === "streaming";
+  const messageRequired = operation === "sendMessage" || operation === "sendStreamingMessage";
+  const structuredComposer = workspace === "lab" && messageRequired;
 
   return (
     <section className="flex h-full min-h-0 w-full flex-col overflow-hidden border-b border-white/10 sm:border-b-0">
       <div className="flex min-h-11 shrink-0 items-center justify-between gap-3 border-b border-white/10 px-3">
         <div>
-          <h2 className="text-sm font-black text-white">Chat</h2>
-          <p className="text-xs text-muted">Protocol text transcript</p>
+          <h2 className="text-sm font-black text-white">{workspace === "lab" ? "Protocol Lab" : "Quick Test"}</h2>
+          <p className="text-xs text-muted">
+            {workspace === "lab"
+              ? mode === "strict" ? "Structured A2A v1 operation builder and transcript" : "Structured direct-endpoint testing. Evidence is non-conformant."
+              : "Protocol text transcript"}
+          </p>
         </div>
         <button type="button" className="btn-secondary min-h-9 px-2 text-xs" onClick={onReset}>
           <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1126,7 +1461,9 @@ function ChatPane({
             <div className="max-w-sm">
               <p className="text-sm font-black text-white">No run yet.</p>
               <p className="mt-2 text-sm leading-6 text-muted">
-                Connect an A2A endpoint, send a prompt, and inspect every stream frame beside the rendered A2UI surface.
+                {workspace === "lab"
+                  ? "Connect an A2A endpoint, compose a supported operation, and inspect the negotiated contract and evidence."
+                  : "Connect an A2A endpoint, send a prompt, and inspect every stream frame."}
               </p>
             </div>
           </div>
@@ -1151,31 +1488,54 @@ function ChatPane({
         )}
       </div>
       <div className="shrink-0 border-t border-white/10 p-2.5">
-        <label className="grid gap-2">
-          <span className="text-xs font-black text-muted">Prompt</span>
-          <textarea
-            className="workbench-input max-h-28 min-h-[4.5rem] resize-none text-sm leading-6"
-            value={prompt}
-            placeholder="Ask the upstream agent for A2UI output."
-            onChange={(event) => onPromptChange(event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                event.preventDefault();
-                onSend();
-              }
-            }}
+        {structuredComposer ? (
+          <PartComposer
+            parts={messageParts}
+            mode={mode}
+            disabled={streaming}
+            onChange={onMessagePartsChange}
+            onCreateId={onCreatePartId}
           />
-        </label>
+        ) : (
+          <label className="grid gap-2">
+            <span className="text-xs font-black text-muted">
+              {messageRequired ? "Prompt" : `Selected operation: ${operation}`}
+            </span>
+            <textarea
+              className="workbench-input max-h-28 min-h-[4.5rem] resize-none text-sm leading-6"
+              value={prompt}
+              disabled={!messageRequired}
+              placeholder={messageRequired ? "Send a message to the selected A2A agent." : "This operation does not use a prompt."}
+              onChange={(event) => onPromptChange(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  onSend();
+                }
+              }}
+            />
+          </label>
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button type="button" className="btn-primary" disabled={!prompt.trim() || streaming} onClick={onSend}>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={operationUnavailable || (messageRequired && !structuredComposer && !prompt.trim()) || streaming}
+            onClick={structuredComposer ? onStructuredSend : () => onSend()}
+          >
             <Send className="h-4 w-4" aria-hidden="true" />
-            Send
+            Run {operation}
           </button>
           <button type="button" className="btn-danger" disabled={!streaming} onClick={onAbort}>
             <Square className="h-4 w-4" aria-hidden="true" />
             Abort
           </button>
         </div>
+        {operationUnavailable ? (
+          <p className="mt-2 text-xs leading-5 text-muted" role="status">
+            The discovered Agent Card does not advertise the capability required by this operation.
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -1188,45 +1548,6 @@ function ChatMarkdown({ text }: { text: string }) {
         {text}
       </ReactMarkdown>
     </div>
-  );
-}
-
-function A2uiStage({ surfaces }: { surfaces: SurfaceModel<ReactComponentImplementation>[] }) {
-  return (
-    <section className="flex h-full min-h-0 w-full flex-col overflow-hidden">
-      <div className="flex min-h-11 shrink-0 items-center justify-between gap-3 border-b border-white/10 px-3">
-        <div>
-          <h2 className="text-sm font-black text-white">A2UI Stage</h2>
-          <p className="text-xs text-muted">React v0.9 renderer</p>
-        </div>
-        <div className="rounded-lg border border-blue/30 bg-blue/10 px-3 py-1.5 font-mono text-xs text-blue">
-          {surfaces.length} surfaces
-        </div>
-      </div>
-      <MarkdownContext.Provider value={renderSafeMarkdown}>
-        <div className="a2ui-stage min-h-0 flex-1 overflow-auto overscroll-contain bg-graphite-950/35 p-3">
-          {surfaces.length === 0 ? (
-            <div className="grid h-full place-items-center text-center">
-              <div className="max-w-md p-6">
-                <p className="text-sm font-black text-white">Waiting for A2UI.</p>
-                <p className="mt-2 text-sm leading-6 text-muted">
-                  Envelopes with `application/a2ui+json` or fenced `a2ui` blocks will render here.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-4">
-              {surfaces.map((surface) => (
-                <div key={surface.id} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
-                  <div className="mb-3 font-mono text-[11px] text-muted">surface: {surface.id}</div>
-                  <A2uiSurface surface={surface} />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </MarkdownContext.Provider>
-    </section>
   );
 }
 
@@ -1243,6 +1564,8 @@ function ProtocolInspector({
   status,
   clientActions,
   counts,
+  surfaces,
+  mode,
 }: {
   activeTab: InspectorTab;
   onTabChange: (tab: InspectorTab) => void;
@@ -1256,13 +1579,16 @@ function ProtocolInspector({
   status?: A2aStatus;
   clientActions: ClientActionEntry[];
   counts: { raw: number; a2a: number; a2ui: number; errors: number };
+  surfaces: SurfaceModel<ReactComponentImplementation>[];
+  mode: WorkbenchMode;
 }) {
   const tabs: { id: InspectorTab; label: string }[] = [
     { id: "run", label: "Run" },
+    { id: "contract", label: "Contract" },
     { id: "request", label: "Request" },
     { id: "raw", label: "Raw" },
     { id: "a2a", label: "A2A" },
-    { id: "a2ui", label: "A2UI" },
+    ...(surfaces.length > 0 || a2uiEvents.length > 0 ? [{ id: "a2ui" as const, label: "A2UI" }] : []),
     { id: "meta", label: "Meta" },
   ];
 
@@ -1270,6 +1596,7 @@ function ProtocolInspector({
     <aside className="flex min-h-0 w-full flex-col overflow-hidden border-t border-white/10 sm:border-t-0">
       <div className="shrink-0 border-b border-white/10 p-3">
         <h2 className="text-sm font-black text-white">Protocol Inspector</h2>
+        {mode === "compatibility" ? <p className="mt-1 text-xs font-semibold text-violet" role="status">Non-conformant compatibility evidence</p> : null}
         <div className="mt-3 flex gap-1 overflow-x-auto pb-0.5">
           {tabs.map((tab) => (
             <button
@@ -1286,10 +1613,11 @@ function ProtocolInspector({
       </div>
       <div className="min-h-0 flex-1 overflow-auto overscroll-contain p-3">
         {activeTab === "run" ? <RunTab timeline={timeline} errors={errors} counts={counts} /> : null}
+        {activeTab === "contract" ? <ConnectionContract value={readConnectionContract(requestInfo)} /> : null}
         {activeTab === "request" ? <JsonPanel value={requestInfo ?? { message: "No request emitted yet." }} /> : null}
         {activeTab === "raw" ? <JsonPanel value={rawFrames} /> : null}
         {activeTab === "a2a" ? <JsonPanel value={a2aFrames} /> : null}
-        {activeTab === "a2ui" ? <JsonPanel value={a2uiEvents} /> : null}
+        {activeTab === "a2ui" ? <LazyA2uiStage surfaces={surfaces} /> : null}
         {activeTab === "meta" ? (
           <JsonPanel
             value={{
@@ -1302,6 +1630,75 @@ function ProtocolInspector({
       </div>
     </aside>
   );
+}
+
+function ConnectionContract({ value }: { value: unknown }) {
+  if (!isPlainRecord(value) || typeof value.message === "string") {
+    return <EmptyInspectorState message={typeof value === "object" && value !== null && "message" in value ? String(value.message) : "Connect to inspect the negotiated contract."} />;
+  }
+
+  const selectedInterface = isPlainRecord(value.selectedInterface) ? value.selectedInterface : {};
+  const compatibilityMode = value.mode === "compatibility";
+  const extensions = Array.isArray(value.negotiatedExtensions) ? value.negotiatedExtensions.filter((item): item is string => typeof item === "string") : [];
+  const requirement = Array.isArray(value.securityRequirement) ? value.securityRequirement : [];
+
+  return (
+    <div className="grid gap-4">
+      <section className="rounded-lg border border-cyan/20 bg-cyan/[0.045] p-3">
+        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-strong">{compatibilityMode ? "Compatibility endpoint" : "Selected interface"}</p>
+        <dl className="mt-3 grid gap-2 text-sm">
+          <ContractRow label="Profile" value={compatibilityMode ? "Direct endpoint compatibility" : "Strict A2A v1"} />
+          <ContractRow label="Binding" value={readContractString(selectedInterface.protocolBinding ?? value.binding)} />
+          <ContractRow label="Endpoint" value={readContractString(selectedInterface.url ?? value.endpoint)} mono />
+          <ContractRow label="Tenant" value={readContractString(selectedInterface.tenant)} />
+          <ContractRow label="Card URL" value={compatibilityMode ? "Not used in compatibility mode" : readContractString(value.cardUrl)} mono />
+          <ContractRow label="Protocol" value={readContractString(value.protocolVersion)} />
+        </dl>
+      </section>
+      {compatibilityMode ? (
+        <section className="rounded-lg border border-violet/30 bg-violet/10 p-3 text-sm text-muted">
+          This run bypasses strict Agent Card discovery and negotiation. Its evidence is available for endpoint diagnostics, not A2A v1 conformance.
+        </section>
+      ) : <>
+      <section>
+        <h3 className="mb-2 text-xs font-black text-white">Trust and cache</h3>
+        <dl className="grid gap-2 rounded-lg border border-white/10 bg-white/[0.035] p-3 text-sm">
+          <ContractRow label="Signature" value={readContractString(value.trust)} />
+          <ContractRow label="Card cache" value={readContractString(value.cache)} />
+        </dl>
+      </section>
+      <section>
+        <h3 className="mb-2 text-xs font-black text-white">Negotiated extensions</h3>
+        {extensions.length > 0 ? (
+          <ul className="grid gap-2">
+            {extensions.map((extension) => <li key={extension} className="break-all rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2 font-mono text-xs text-muted">{extension}</li>)}
+          </ul>
+        ) : <p className="rounded-lg border border-white/10 bg-white/[0.035] p-3 text-sm text-muted">No extensions negotiated.</p>}
+      </section>
+      <section>
+        <h3 className="mb-2 text-xs font-black text-white">Security requirement</h3>
+        <JsonPanel value={requirement.length > 0 ? requirement : { message: "No Agent Card security requirement selected." }} />
+      </section>
+      </>}
+    </div>
+  );
+}
+
+function ContractRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
+      <dt className="text-muted">{label}</dt>
+      <dd className={`min-w-0 break-all text-white ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
+    </div>
+  );
+}
+
+function EmptyInspectorState({ message }: { message: string }) {
+  return <p className="rounded-lg border border-white/10 bg-white/[0.035] p-3 text-sm text-muted">{message}</p>;
+}
+
+function readContractString(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value : "Not available";
 }
 
 function RunTab({
@@ -1369,23 +1766,6 @@ function JsonPanel({ value }: { value: unknown }) {
   );
 }
 
-async function renderSafeMarkdown(markdown: string): Promise<string> {
-  const escaped = escapeHtml(markdown);
-  return escaped
-    .split(/\n{2,}/)
-    .map((paragraph) => `<p>${paragraph.replaceAll("\n", "<br />")}</p>`)
-    .join("");
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 function readPersistedConnection(): PersistedConnection | undefined {
   const raw = window.localStorage.getItem(CONNECTION_STORAGE_KEY);
   if (!raw) {
@@ -1396,21 +1776,17 @@ function readPersistedConnection(): PersistedConnection | undefined {
     const parsed = JSON.parse(raw) as PersistedConnection;
     return {
       upstream: typeof parsed.upstream === "string" ? parsed.upstream : "",
+      mode: parsed.mode === "compatibility" ? "compatibility" : "strict",
+      binding: parsed.binding === "JSONRPC" ? "JSONRPC" : "HTTP+JSON",
       a2uiTrigger: typeof parsed.a2uiTrigger === "string" ? parsed.a2uiTrigger : DEFAULT_A2UI_TRIGGER,
-      headers: Array.isArray(parsed.headers) ? parsed.headers.filter(isPersistedHeader) : [],
-      oauth: isPersistedOAuth(parsed.oauth) ? parsed.oauth : defaultM2mOAuth,
+      // Do not revive credentials saved by an older browser profile. The
+      // subsequent persistence effect overwrites that legacy shape.
+      headers: [],
+      oauth: defaultM2mOAuth,
     };
   } catch {
     return undefined;
   }
-}
-
-function isPersistedHeader(value: unknown): value is PersistedHeader {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value as PersistedHeader;
-  return typeof candidate.name === "string" && typeof candidate.value === "string";
 }
 
 function stripHeaderIds(headers: HeaderRow[]): PersistedHeader[] {
@@ -1420,23 +1796,6 @@ function stripHeaderIds(headers: HeaderRow[]): PersistedHeader[] {
     enabled: header.enabled,
     secret: header.secret,
   }));
-}
-
-function isPersistedOAuth(value: unknown): value is PersistedM2mOAuth {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const candidate = value as PersistedM2mOAuth;
-  return (
-    typeof candidate.enabled === "boolean" &&
-    typeof candidate.tokenUrl === "string" &&
-    typeof candidate.clientId === "string" &&
-    typeof candidate.clientSecret === "string" &&
-    typeof candidate.scope === "string" &&
-    typeof candidate.audience === "string" &&
-    (candidate.authMethod === "client_secret_basic" || candidate.authMethod === "client_secret_post")
-  );
 }
 
 function getCreateSurfaceIds(messages: unknown[]): string[] {
@@ -1490,6 +1849,21 @@ function summarizeEvent(data: unknown): string {
 
 function stringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function mergeInspectorInfo(current: unknown, key: string, value: unknown): Record<string, unknown> {
+  const base = typeof current === "object" && current !== null && !Array.isArray(current)
+    ? current as Record<string, unknown>
+    : {};
+  return { ...base, [key]: value };
+}
+
+function readConnectionContract(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { message: "Connect to inspect the negotiated contract." };
+  }
+  const connection = (value as Record<string, unknown>).connection;
+  return connection ?? { message: "Connect to inspect the negotiated contract." };
 }
 
 function formatTime(date: Date): string {

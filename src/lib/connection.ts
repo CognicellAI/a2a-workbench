@@ -59,14 +59,21 @@ export function redactHeaders(headers: NormalizedHeader[]): Record<string, strin
 export function toPersistableConnection(connection: PersistedConnection): PersistedConnection {
   return {
     upstream: connection.upstream,
+    mode: connection.mode,
+    binding: connection.binding,
     a2uiTrigger: connection.a2uiTrigger,
-    headers: connection.headers.map((header) => ({
-      ...header,
-      value: header.secret ? "" : header.value,
-    })),
+    // A browser profile is for safe connection preferences only. Headers and
+    // OAuth fields are credentials or credential configuration, so they stay
+    // in memory for the current browser session.
+    headers: [],
     oauth: {
-      ...connection.oauth,
+      enabled: false,
+      tokenUrl: "",
+      clientId: "",
       clientSecret: "",
+      scope: "",
+      audience: "",
+      authMethod: "client_secret_basic",
     },
   };
 }
