@@ -1,0 +1,14 @@
+services:
+  a2a-workbench:
+    build:
+      context: .
+    image: cognicellai/a2a-workbench:local
+    ports:
+      - "3000:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      A2A_ALLOW_PRIVATE_NETWORKS: ${A2A_ALLOW_PRIVATE_NETWORKS:-false}
+    restart: unless-stopped

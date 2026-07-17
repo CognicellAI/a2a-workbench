@@ -38,6 +38,31 @@ Open [http://localhost:3000](http://localhost:3000). Strict mode accepts an agen
 origin such as `https://agent.example.com` or a full Agent Card URL. Direct
 operation endpoints belong only in compatibility mode.
 
+## Run with Docker
+
+Build and start the workbench with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Open [http://localhost:3000](http://localhost:3000). To configure optional
+upstream defaults or credentials, copy `.env.example` to `.env` before starting.
+Do not enable `A2A_ALLOW_PRIVATE_NETWORKS` on a shared or internet-facing host.
+
+For a direct Docker command:
+
+```bash
+docker build -t a2a-workbench .
+docker run --rm -p 3000:3000 a2a-workbench
+```
+
+Add `--env-file .env` if you created a local environment file.
+
+The image runs as an unprivileged user and uses Next.js standalone output. Put a
+reverse proxy with TLS, request limits, and rate limiting in front of it when
+exposing it publicly.
+
 ## Reusable client
 
 ```ts
