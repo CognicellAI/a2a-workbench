@@ -100,8 +100,14 @@ function renderMermaid() {
   try {
     const input = join(temporary, "diagrams.md");
     const output = join(temporary, "rendered.md");
+    const puppeteerConfig = join(temporary, "puppeteer.json");
     writeFileSync(input, blocks.map((block) => `## ${block.source}\n\n\`\`\`mermaid\n${block.body}\`\`\`\n`).join("\n"));
-    run(join(root, "node_modules", ".bin", "mmdc"), ["--input", input, "--output", output, "--quiet"], "Mermaid rendering");
+    writeFileSync(puppeteerConfig, JSON.stringify({ args: ["--no-sandbox"] }));
+    run(
+      join(root, "node_modules", ".bin", "mmdc"),
+      ["--input", input, "--output", output, "--quiet", "--puppeteerConfigFile", puppeteerConfig],
+      "Mermaid rendering",
+    );
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
